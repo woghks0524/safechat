@@ -18,6 +18,18 @@ assistant_id = 'asst_prIG3LL7UZnZ1qJ8ChTr5cye'
 
 st.set_page_config(page_title="학생 질문 페이지", layout="wide")
 
+# 제작자 이름 
+st.caption("웹 어플리케이션 문의사항은 정재환(서울창일초), woghks0524jjh@gmail.com, 010-3393-0283으로 연락주세요.")
+
+# CSS 스타일을 사용하여 상단바와 메뉴 숨기기
+hide_streamlit_style = """
+            <style>
+            MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 if "conversation" not in st.session_state:
     st.session_state["conversation"] = []
 if "usingthread" not in st.session_state:
@@ -79,7 +91,7 @@ if approved and latest_answer:
 # ──────────────────────────────
 # ✅ 대화 화면
 # ──────────────────────────────
-st.title("💬 AI 질문하기")
+st.title("💬 생성형AI 질문하기")
 st.subheader("📚 대화 내용")
 with st.container(height=600, border=True):
     for role, msg in st.session_state["conversation"]:
