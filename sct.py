@@ -1,112 +1,158 @@
 import streamlit as st
-import gspread
-import json
-import time
 import openai
-from datetime import datetime
+import time
+import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import datetime
+import random
+import json
 from streamlit_autorefresh import st_autorefresh
 
-# 페이지 구성
-st.set_page_config(page_title="교사용 응답 승인", layout="wide")
-
-st.caption("웹 어플리케이션 문의사항은 정재환(서울창일초), woghks0524jjh@gmail.com, 010-3393-0283으로 연락주세요.")
-
-st_autorefresh(interval=10000, key="refresh_teacher")
-
-# OpenAI 설정
+# ──────────────────────────────
+# ✅ 기본 설정
+# ──────────────────────────────
 api_keys = st.secrets["api"]["keys"]
-openai.api_key = api_keys[0]
-client = openai.OpenAI(api_key=openai.api_key)
+selected_api_key = random.choice(api_keys)
+client = openai.OpenAI(api_key=selected_api_key)
 assistant_id = 'asst_prIG3LL7UZnZ1qJ8ChTr5cye'
 
-# ─────────────────────────────
-# ✅ 구글 시트 연결
-# ─────────────────────────────
-@st.cache_resource
+st.set_page_config(page_title="학생용 생성형AI 질문", layout="wide")
+st.caption("웹 어플리케이션 문의사항은 정재환(서울창일초), woghks0524jjh@gmail.com, 010-3393-0283으로 연락주세요.")
+
+if "conversation" not in st.session_state:
+    st.session_state["conversation"] = []
+if "usingthread" not in st.session_state:
+    new_thread = client.beta.threads.create()
+    st.session_state["usingthread"] = new_thread.id
+if "status" not in st.session_state:
+    st.session_state["status"] = "idle"
+if "starter_message_shown" not in st.session_state:
+    st.session_state["starter_message_shown"] = False
+
+# ──────────────────────────────
+# ✅ 사이드바: 정보 입력
+# ──────────────────────────────
+with st.sidebar:
+    st.header("📝 기본 정보")
+    code = st.text_input("🔑 코드", key="code")
+    student_name = st.text_input("🧒 이름", key="name")
+    conversation_title = st.text_input("📘 대화 제목", key="title")
+    conversation_goal = st.text_area("🎯 대화 목표", key="goal")
+    auto_approve = st.checkbox("✅ 자동 승인", key="auto_approve")
+
+# ──────────────────────────────
+# ✅ 자동 새로고침 (승인 대기 중)
+# ──────────────────────────────
+if st.session_state["status"] == "waiting_for_approval":
+    st_autorefresh(interval=10000, key="refresh")
+
+# ──────────────────────────────
+# ✅ 시트 접근 함수
+# ──────────────────────────────
 def get_sheet():
     credentials_dict = json.loads(st.secrets["gcp"]["credentials"])
-    scope = [
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets",
-    ]
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        "https://www.googleapis.com/auth/spreadsheets"])
     gc = gspread.authorize(credentials)
     return gc.open(st.secrets["google"]["sc"]).sheet1
 
 sheet = get_sheet()
 data = sheet.get_all_records()
 
-# ─────────────────────────────
-# ✅ 사이드바 코드 입력
-# ─────────────────────────────
-with st.sidebar:
-    st.header("👩‍🏫 교사용 승인")
-    code_input = st.text_input("🔐 교사 코드 입력", placeholder="예: 바나나")
+# ──────────────────────────────
+# ✅ 승인 여부 확인
+# ──────────────────────────────
+approved = False
+latest_answer = None
 
-# ─────────────────────────────
-# ✅ 응답 승인 영역
-# ─────────────────────────────
-st.title("📜 생성형AI 응답 승인 페이지")
+for row in reversed(data):
+    if (row["코드"] == code and
+        row["이름"] == student_name and
+        row["질문"] == st.session_state.get("latest_question")):
+        approved = row["승인여부"].upper() == "TRUE"
+        latest_answer = row["응답"]
+        break
 
-if code_input:
-    pending_data = [row for row in data if row["코드"] == code_input and row["승인여부"].upper() != "TRUE"]
+if approved and latest_answer:
+    if ("assistant", latest_answer) not in st.session_state["conversation"]:
+        st.session_state["conversation"].append(("assistant", latest_answer))
+        st.session_state["status"] = "idle"
+        st.rerun()
 
-    if not pending_data:
-        st.warning("아직 승인되지 않은 질문이 없습니다.")
+# ──────────────────────────────
+# ✅ 대화 화면
+# ──────────────────────────────
+st.title("💬 생성형AI 질문하기")
+st.subheader("📚 대화 내용")
+
+if not st.session_state["starter_message_shown"]:
+    st.session_state["conversation"].insert(0, (
+        "assistant", "학습 내용에 대해 궁금한 점이나 더 알고 싶은 점이 있다면 질문을 남겨주세요."
+    ))
+    st.session_state["starter_message_shown"] = True
+
+with st.container(height=500, border=True):
+    for role, msg in st.session_state["conversation"]:
+        if role == "user":
+            st.chat_message("user").write(msg)
+        elif role == "assistant":
+            st.chat_message("assistant").write(msg)
+
+# ──────────────────────────────
+# ✅ 질문 입력 처리
+# ──────────────────────────────
+question = st.chat_input("✍️ 궁금한 것을 질문해보세요")
+
+if question:
+    st.session_state["conversation"].append(("user", question))
+
+    # GPT 프롬프트
+    system_prompt = f"""
+    대화 제목: {conversation_title}
+    대화 목표: {conversation_goal}
+
+    학생이 다음과 같이 질문했어요:
+    \"{question}\"
+    친절하게, 초등학생이 이해할 수 있도록 설명해주세요.
+    """
+
+    # GPT 실행
+    client.beta.threads.messages.create(
+        thread_id=st.session_state["usingthread"],
+        role="user",
+        content=system_prompt)
+
+    run = client.beta.threads.runs.create(
+        thread_id=st.session_state["usingthread"],
+        assistant_id=assistant_id)
+
+    while True:
+        run = client.beta.threads.runs.retrieve(
+            thread_id=st.session_state["usingthread"],
+            run_id=run.id)
+        if run.status == "completed":
+            break
+        time.sleep(2)
+
+    response = client.beta.threads.messages.list(st.session_state["usingthread"])
+    msg = response.data[0].content[0].text.value
+
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["latest_answer"] = msg
+    st.session_state["latest_question"] = question
+
+    # 시트 저장 (우선 FALSE)
+    sheet.append_row([code, student_name, question, msg, "FALSE", now])
+    row_index = len(data) + 2  # 헤더 포함된 다음 줄
+
+    if auto_approve:
+        sheet.update_cell(row_index, 5, "TRUE")  # 승인여부 TRUE로 업데이트
+        st.session_state["conversation"].append(("assistant", msg))
+        st.session_state["status"] = "idle"
     else:
-        st.markdown(f"### 📋 '{code_input}' 코드에 대한 미승인 질문 ({len(pending_data)}개)")
+        st.session_state["status"] = "waiting_for_approval"
+        st.info("⏳ 선생님이 질문을 확인 중이에요. 잠시만 기다려 주세요.")
 
-        rows = (len(pending_data) + 4) // 5
-        for i in range(rows):
-            cols = st.columns(5)
-            for j, row in enumerate(pending_data[i * 5 : (i + 1) * 5]):
-                with cols[j]:
-                    with st.container(border=True):
-                        st.markdown(f"#### 🙋 {row['이름']}")
-                        st.markdown(f"**❓ 질문:** {row['질문']}")
-                        st.markdown("**🤖 GPT 응답:**")
-                        st.write(row["응답"])
-
-                        row_index = data.index(row) + 2  # 시트는 1부터 시작, 헤더 제외
-                        col_응답 = 4
-                        col_승인 = 5
-
-                        if st.button("✅ 승인", key=f"approve_{row_index}"):
-                            sheet.update_cell(row_index, col_승인, "TRUE")
-                            st.success("✅ 승인 완료")
-                            st.rerun()
-
-                        if st.button("🔁 재생성", key=f"regen_{row_index}"):
-                            thread = client.beta.threads.create()
-                            prompt = f"""학생이 다음과 같이 질문했어요:
-\"{row['질문']}\" 
-다시 한번 친절하게, 초등학생이 이해할 수 있도록 설명해주세요."""
-
-                            client.beta.threads.messages.create(
-                                thread_id=thread.id,
-                                role="user",
-                                content=prompt
-                            )
-
-                            run = client.beta.threads.runs.create(
-                                thread_id=thread.id,
-                                assistant_id=assistant_id
-                            )
-
-                            while True:
-                                result = client.beta.threads.runs.retrieve(
-                                    thread_id=thread.id,
-                                    run_id=run.id)
-                                if result.status == "completed":
-                                    break
-                                time.sleep(1)
-
-                            new_msg = client.beta.threads.messages.list(thread_id=thread.id).data[0].content[0].text.value
-                            sheet.update_cell(row_index, col_응답, new_msg)
-                            sheet.update_cell(row_index, col_승인, "FALSE")
-                            st.success("✅ 새 응답으로 업데이트 완료")
-                            st.rerun()
-else:
-    st.info("먼저 교사 코드를 입력하세요.")
+    st.rerun()
