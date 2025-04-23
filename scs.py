@@ -17,6 +17,15 @@ client = openai.OpenAI(api_key=selected_api_key)
 assistant_id = 'asst_prIG3LL7UZnZ1qJ8ChTr5cye'
 
 st.set_page_config(page_title="학생용 생성형AI 질문", layout="wide")
+
+st.markdown("""
+    <style>
+    #MainMenu {visibility: visible !important;}
+    header {visibility: visible !important;}
+    footer {visibility: visible !important;}
+    </style>
+""", unsafe_allow_html=True)
+
 st.caption("웹 어플리케이션 문의사항은 정재환(서울창일초), woghks0524jjh@gmail.com, 010-3393-0283으로 연락주세요.")
 
 if "conversation" not in st.session_state:
